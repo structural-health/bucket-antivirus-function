@@ -27,6 +27,7 @@ from common import AV_DEFINITION_S3_BUCKET
 from common import AV_DEFINITION_S3_PREFIX
 from common import AV_DELETE_INFECTED_FILES
 from common import AV_PROCESS_ORIGINAL_VERSION_ONLY
+from common import AV_QUARANTINE_S3_BUCKET
 from common import AV_SCAN_START_METADATA
 from common import AV_SCAN_START_SNS_ARN
 from common import AV_SIGNATURE_METADATA
@@ -115,6 +116,20 @@ def delete_s3_object(s3_object):
     else:
         print("Infected file deleted: %s.%s" % (s3_object.bucket_name, s3_object.key))
 
+def quarantine_s3_object(s3, s3_object):
+    quarantined_s3_object = s3.Object(AV_QUARANTINE_S3_BUCKET, s3_object.key)
+    try:
+        quarantined_s3_object.copy(
+            {
+                'Bucket': s3_object.bucket_name,
+                'Key': s3_object.key
+            }
+        )
+    except:
+        print("Failed to quarantine infected file: %s.%s" % (s3_object.bucket_name, s3_object.key))
+    else:
+        print("Infected file quarantined to: %s.%s" % (quarantined_s3_object.bucket_name, quarantined_s3_object.key))
+        delete_s3_object(s3_object)
 
 def set_av_metadata(s3_object, scan_result, scan_signature, timestamp):
     content_type = s3_object.content_type
@@ -266,8 +281,11 @@ def lambda_handler(event, context):
         os.remove(file_path)
     except OSError:
         pass
-    if str_to_bool(AV_DELETE_INFECTED_FILES) and scan_result == AV_STATUS_INFECTED:
-        delete_s3_object(s3_object)
+    if scan_result == AV_STATUS_INFECTED:
+        if AV_QUARANTINE_S3_BUCKET is not None:
+            quarantine_s3_object(s3, s3_object)
+        elif str_to_bool(AV_DELETE_INFECTED_FILES):
+            delete_s3_object(s3_object)
     stop_scan_time = get_timestamp()
     print("Script finished at %s\n" % stop_scan_time)
 
